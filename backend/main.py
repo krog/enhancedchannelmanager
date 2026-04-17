@@ -560,6 +560,7 @@ async def startup_event():
                 probe_timeout=settings.stream_probe_timeout,
                 user_timezone=settings.user_timezone,
                 bitrate_sample_duration=settings.bitrate_sample_duration,
+                bitrate_warmup_duration=settings.bitrate_warmup_duration,
                 parallel_probing_enabled=settings.parallel_probing_enabled,
                 max_concurrent_probes=settings.max_concurrent_probes,
                 profile_distribution_strategy=settings.profile_distribution_strategy,

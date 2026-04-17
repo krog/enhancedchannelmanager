@@ -69,6 +69,7 @@ class SettingsRequest(BaseModel):
     stream_probe_timeout: int = 30
     stream_probe_schedule_time: str = "03:00"  # HH:MM format, 24h
     bitrate_sample_duration: int = 10  # Duration in seconds to sample stream for bitrate (10, 20, or 30)
+    bitrate_warmup_duration: int = 3  # Seconds to discard at start of bitrate measurement to skip initial burst (0-10)
     parallel_probing_enabled: bool = True  # Probe multiple streams from different M3Us simultaneously
     max_concurrent_probes: int = 8  # Max simultaneous probes when parallel probing is enabled (1-16)
     profile_distribution_strategy: str = "fill_first"  # How to distribute probes across M3U profiles: fill_first, round_robin, least_loaded
@@ -146,6 +147,7 @@ class SettingsResponse(BaseModel):
     stream_probe_timeout: int
     stream_probe_schedule_time: str  # HH:MM format, 24h
     bitrate_sample_duration: int
+    bitrate_warmup_duration: int  # Seconds to discard at start of bitrate measurement to skip initial burst (0-10)
     parallel_probing_enabled: bool  # Probe multiple streams from different M3Us simultaneously
     max_concurrent_probes: int  # Max simultaneous probes when parallel probing is enabled (1-16)
     profile_distribution_strategy: str  # How to distribute probes across M3U profiles: fill_first, round_robin, least_loaded
@@ -276,6 +278,7 @@ async def get_current_settings():
         stream_probe_timeout=settings.stream_probe_timeout,
         stream_probe_schedule_time=settings.stream_probe_schedule_time,
         bitrate_sample_duration=settings.bitrate_sample_duration,
+        bitrate_warmup_duration=settings.bitrate_warmup_duration,
         parallel_probing_enabled=settings.parallel_probing_enabled,
         max_concurrent_probes=settings.max_concurrent_probes,
         profile_distribution_strategy=settings.profile_distribution_strategy,
@@ -385,6 +388,7 @@ async def update_settings(request: SettingsRequest):
         stream_probe_timeout=request.stream_probe_timeout,
         stream_probe_schedule_time=request.stream_probe_schedule_time,
         bitrate_sample_duration=request.bitrate_sample_duration,
+        bitrate_warmup_duration=request.bitrate_warmup_duration,
         parallel_probing_enabled=request.parallel_probing_enabled,
         max_concurrent_probes=request.max_concurrent_probes,
         profile_distribution_strategy=request.profile_distribution_strategy,
@@ -539,6 +543,9 @@ async def update_settings(request: SettingsRequest):
         if new_settings.bitrate_sample_duration != current_settings.bitrate_sample_duration:
             prober.bitrate_sample_duration = new_settings.bitrate_sample_duration
             changed.append(f"bitrate_sample_duration={new_settings.bitrate_sample_duration}")
+        if new_settings.bitrate_warmup_duration != current_settings.bitrate_warmup_duration:
+            prober.bitrate_warmup_duration = max(0, min(10, new_settings.bitrate_warmup_duration))
+            changed.append(f"bitrate_warmup_duration={prober.bitrate_warmup_duration}")
         if new_settings.skip_recently_probed_hours != current_settings.skip_recently_probed_hours:
             prober.skip_recently_probed_hours = new_settings.skip_recently_probed_hours
             changed.append(f"skip_recently_probed_hours={new_settings.skip_recently_probed_hours}")
@@ -853,6 +860,7 @@ async def restart_services():
                 probe_timeout=settings.stream_probe_timeout,
                 user_timezone=settings.user_timezone,
                 bitrate_sample_duration=settings.bitrate_sample_duration,
+                bitrate_warmup_duration=settings.bitrate_warmup_duration,
                 parallel_probing_enabled=settings.parallel_probing_enabled,
                 max_concurrent_probes=settings.max_concurrent_probes,
                 profile_distribution_strategy=settings.profile_distribution_strategy,

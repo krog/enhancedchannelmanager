@@ -433,6 +433,7 @@ export function SettingsTab({ onSaved, onThemeChange, channelProfiles = [], onPr
   // Stream probe settings (scheduled probing is controlled by Task Engine)
   const [streamProbeTimeout, setStreamProbeTimeout] = useState(30);
   const [bitrateSampleDuration, setBitrateSampleDuration] = useState(10);
+  const [bitrateWarmupDuration, setBitrateWarmupDuration] = useState(3);
   const [parallelProbingEnabled, setParallelProbingEnabled] = useState(true);
   const [maxConcurrentProbes, setMaxConcurrentProbes] = useState(8);
   const [profileDistributionStrategy, setProfileDistributionStrategy] = useState('fill_first');
@@ -751,6 +752,7 @@ export function SettingsTab({ onSaved, onThemeChange, channelProfiles = [], onPr
       // Stream probe settings (scheduled probing is controlled by Task Engine)
       setStreamProbeTimeout(settings.stream_probe_timeout ?? 30);
       setBitrateSampleDuration(settings.bitrate_sample_duration ?? 10);
+      setBitrateWarmupDuration(settings.bitrate_warmup_duration ?? 3);
       setParallelProbingEnabled(settings.parallel_probing_enabled ?? true);
       setMaxConcurrentProbes(settings.max_concurrent_probes ?? 8);
       setProfileDistributionStrategy(settings.profile_distribution_strategy ?? 'fill_first');
@@ -883,6 +885,7 @@ export function SettingsTab({ onSaved, onThemeChange, channelProfiles = [], onPr
         // Stream probe settings (scheduled probing is controlled by Task Engine)
         stream_probe_timeout: streamProbeTimeout,
         bitrate_sample_duration: bitrateSampleDuration,
+        bitrate_warmup_duration: bitrateWarmupDuration,
         parallel_probing_enabled: parallelProbingEnabled,
         max_concurrent_probes: maxConcurrentProbes,
         profile_distribution_strategy: profileDistributionStrategy,
@@ -3300,6 +3303,28 @@ export function SettingsTab({ onSaved, onThemeChange, channelProfiles = [], onPr
                   { value: '10', label: '10 seconds' },
                   { value: '20', label: '20 seconds' },
                   { value: '30', label: '30 seconds' },
+                ]}
+              />
+            </div>
+
+            <div className="form-group-vertical">
+              <label htmlFor="bitrateWarmupDuration">Bitrate warmup period</label>
+              <span className="form-description">
+                Seconds to discard at the start of bitrate measurement. IPTV servers
+                send an initial burst to fill client buffers, which inflates results.
+                Set to 0 to disable warmup.
+              </span>
+              <CustomSelect
+                className="compact-select"
+                value={String(bitrateWarmupDuration)}
+                onChange={(val) => setBitrateWarmupDuration(Number(val))}
+                options={[
+                  { value: '0', label: 'No warmup' },
+                  { value: '2', label: '2 seconds' },
+                  { value: '3', label: '3 seconds' },
+                  { value: '5', label: '5 seconds' },
+                  { value: '8', label: '8 seconds' },
+                  { value: '10', label: '10 seconds' },
                 ]}
               />
             </div>

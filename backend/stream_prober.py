@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 # Default configuration
 DEFAULT_PROBE_TIMEOUT = 30  # seconds
 BITRATE_SAMPLE_DURATION = 8  # seconds to sample stream for bitrate measurement
+BITRATE_WARMUP_DURATION = 3  # seconds to discard at start of measurement to skip initial burst
 
 # Per-account ramp-up configuration
 RAMP_INITIAL_LIMIT = 1         # Start each account at 1 concurrent probe
@@ -286,6 +287,7 @@ class StreamProber:
         probe_timeout: int = DEFAULT_PROBE_TIMEOUT,
         user_timezone: str = "",  # IANA timezone name
         bitrate_sample_duration: int = 10,  # Duration in seconds to sample stream for bitrate (10, 20, or 30)
+        bitrate_warmup_duration: int = 3,  # Seconds to discard at start of bitrate measurement to skip initial burst (0-10)
         parallel_probing_enabled: bool = True,  # Probe streams from different M3Us simultaneously
         max_concurrent_probes: int = 8,  # Max simultaneous probes when parallel probing is enabled (1-16)
         profile_distribution_strategy: str = "fill_first",  # How to distribute probes across profiles: fill_first, round_robin, least_loaded
@@ -310,6 +312,7 @@ class StreamProber:
         self.probe_timeout = probe_timeout
         self.user_timezone = user_timezone
         self.bitrate_sample_duration = bitrate_sample_duration
+        self.bitrate_warmup_duration = max(0, min(10, bitrate_warmup_duration))  # Clamp 0-10
         self.parallel_probing_enabled = parallel_probing_enabled
         self.max_concurrent_probes = max(1, min(16, max_concurrent_probes))  # Clamp to 1-16
         self.profile_distribution_strategy = profile_distribution_strategy
@@ -955,18 +958,26 @@ class StreamProber:
         Measure actual stream bitrate by downloading data for a few seconds.
         This is how Dispatcharr gets real bitrate - by measuring throughput.
 
+        IPTV servers typically send an initial burst of data to fill client buffers,
+        which inflates average bitrate measurements. To get an accurate steady-state
+        bitrate, we discard data received during the warmup period before counting.
+
         Returns bitrate in bits per second, or None if measurement fails.
         """
         try:
-            logger.debug("[STREAM-PROBE] Starting bitrate measurement for %ss...", self.bitrate_sample_duration)
+            total_duration = self.bitrate_warmup_duration + self.bitrate_sample_duration
+            logger.debug("[STREAM-PROBE] Starting bitrate measurement: %ds warmup + %ds sampling = %ds total",
+                         self.bitrate_warmup_duration, self.bitrate_sample_duration, total_duration)
 
-            bytes_downloaded = 0
+            warmup_bytes = 0
+            sample_bytes = 0
             start_time = time.time()
+            warmup_end_time = None
 
             # Stream download with timeout (all four parameters required by httpx.Timeout)
             timeout = httpx.Timeout(
                 connect=10.0,
-                read=self.bitrate_sample_duration + 5.0,
+                read=total_duration + 5.0,
                 write=10.0,
                 pool=10.0
             )
@@ -976,23 +987,41 @@ class StreamProber:
                 async with client.stream("GET", url) as response:
                     response.raise_for_status()
 
-                    # Download stream data for the sample duration
+                    # Download stream data with warmup + measurement phases
                     async for chunk in response.aiter_bytes(chunk_size=65536):  # 64KB chunks
-                        bytes_downloaded += len(chunk)
                         elapsed = time.time() - start_time
 
-                        # Stop after sample duration
-                        if elapsed >= self.bitrate_sample_duration:
+                        if elapsed < self.bitrate_warmup_duration:
+                            # Phase 1: Warmup — download but don't count
+                            warmup_bytes += len(chunk)
+                        else:
+                            # Phase 2: Measurement — count bytes for bitrate calculation
+                            if warmup_end_time is None:
+                                warmup_end_time = time.time()
+                                logger.debug("[STREAM-PROBE] Warmup complete: %d bytes discarded in %.2fs",
+                                             warmup_bytes, warmup_end_time - start_time)
+                            sample_bytes += len(chunk)
+
+                        # Stop after total duration (warmup + sample)
+                        if elapsed >= total_duration:
                             break
 
-            elapsed = time.time() - start_time
+            sample_elapsed = time.time() - warmup_end_time if warmup_end_time else 0
+            total_elapsed = time.time() - start_time
 
-            # Calculate bitrate (bits per second)
-            if elapsed > 0:
-                bitrate_bps = int((bytes_downloaded * 8) / elapsed)
-                logger.info("[STREAM-PROBE] Measured bitrate: %d bytes in %.2fs = %d bps (%.2f Mbps)", bytes_downloaded, elapsed, bitrate_bps, bitrate_bps/1000000)
+            # Calculate bitrate from measurement phase only
+            if sample_elapsed > 0:
+                bitrate_bps = int((sample_bytes * 8) / sample_elapsed)
+                logger.info("[STREAM-PROBE] Measured bitrate: %d bytes in %.2fs (warmup: %d bytes discarded in %.2fs) = %d bps (%.2f Mbps)",
+                            sample_bytes, sample_elapsed, warmup_bytes, total_elapsed - sample_elapsed, bitrate_bps, bitrate_bps/1000000)
                 return bitrate_bps
             else:
+                # Warmup was longer than total duration — fall back to full average
+                if total_elapsed > 0:
+                    bitrate_bps = int(((warmup_bytes + sample_bytes) * 8) / total_elapsed)
+                    logger.warning("[STREAM-PROBE] Bitrate measurement: no sample phase, using full average: %d bps (%.2f Mbps)",
+                                   bitrate_bps, bitrate_bps/1000000)
+                    return bitrate_bps
                 logger.warning("[STREAM-PROBE] Bitrate measurement: elapsed time is zero")
                 return None
 
@@ -2861,6 +2890,7 @@ def ensure_prober() -> Optional[StreamProber]:
             probe_timeout=settings.stream_probe_timeout,
             user_timezone=settings.user_timezone,
             bitrate_sample_duration=settings.bitrate_sample_duration,
+            bitrate_warmup_duration=settings.bitrate_warmup_duration,
             parallel_probing_enabled=settings.parallel_probing_enabled,
             max_concurrent_probes=settings.max_concurrent_probes,
             profile_distribution_strategy=settings.profile_distribution_strategy,

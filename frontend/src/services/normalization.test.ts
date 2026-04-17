@@ -117,6 +117,7 @@ describe('Normalization API', () => {
             stream_probe_timeout: 30,
             stream_probe_schedule_time: '03:00',
             bitrate_sample_duration: 10,
+            bitrate_warmup_duration: 3,
             parallel_probing_enabled: true,
             max_concurrent_probes: 8,
             skip_recently_probed_hours: 0,

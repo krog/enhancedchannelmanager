@@ -88,6 +88,7 @@ class DispatcharrSettings(BaseModel):
     stream_probe_timeout: int = 30  # Timeout in seconds for each probe
     stream_probe_schedule_time: str = "03:00"  # Time of day to run probes (HH:MM, 24h format, user's local time)
     bitrate_sample_duration: int = 10  # Duration in seconds to sample stream for bitrate measurement (10, 20, or 30)
+    bitrate_warmup_duration: int = 3  # Seconds to discard at start of bitrate measurement to skip initial burst (0-10)
     # Parallel probing - probe streams from different M3U accounts simultaneously
     parallel_probing_enabled: bool = True
     # Max simultaneous probes when parallel probing is enabled (1-16)

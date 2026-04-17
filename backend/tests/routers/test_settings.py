@@ -46,6 +46,7 @@ def _mock_settings(**overrides):
         "stream_probe_timeout": 30,
         "stream_probe_schedule_time": "03:00",
         "bitrate_sample_duration": 5,
+        "bitrate_warmup_duration": 3,
         "parallel_probing_enabled": False,
         "max_concurrent_probes": 5,
         "profile_distribution_strategy": "round_robin",

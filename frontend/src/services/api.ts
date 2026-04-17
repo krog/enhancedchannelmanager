@@ -800,6 +800,7 @@ export interface SettingsResponse {
   stream_probe_timeout: number;  // Timeout in seconds for each probe
   stream_probe_schedule_time: string;  // Time of day to run probes (HH:MM, 24h format)
   bitrate_sample_duration: number;  // Duration in seconds to sample stream for bitrate (10, 20, or 30)
+  bitrate_warmup_duration: number;  // Seconds to discard at start of bitrate measurement to skip initial burst (0-10)
   parallel_probing_enabled: boolean;  // Probe streams from different M3Us simultaneously
   max_concurrent_probes: number;  // Max simultaneous probes when parallel probing is enabled (1-16)
   profile_distribution_strategy: string;  // How to distribute probes across M3U profiles: fill_first, round_robin, least_loaded
@@ -892,6 +893,7 @@ export async function saveSettings(settings: {
   stream_probe_timeout?: number;  // Optional - timeout in seconds, defaults to 30
   stream_probe_schedule_time?: string;  // Optional - time of day for probes (HH:MM), defaults to "03:00"
   bitrate_sample_duration?: number;  // Optional - duration in seconds to sample stream for bitrate (10, 20, or 30), defaults to 10
+  bitrate_warmup_duration?: number;  // Optional - seconds to discard at start of bitrate measurement (0-10), defaults to 3
   parallel_probing_enabled?: boolean;  // Optional - probe streams from different M3Us simultaneously, defaults to true
   max_concurrent_probes?: number;  // Optional - max simultaneous probes when parallel probing is enabled (1-16), defaults to 8
   profile_distribution_strategy?: string;  // Optional - how to distribute probes across profiles: fill_first, round_robin, least_loaded
