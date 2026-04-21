@@ -39,15 +39,19 @@ bd sync                       # Sync beads data only (NOT for code commits)
 | Architecture Diagram | `docs/architecture.md` |
 | Auth Middleware | `docs/auth_middleware.md` |
 | Backend Architecture | `docs/backend_architecture.md` |
+| Database Migrations | `docs/database_migrations.md` |
 | Pytest Conventions | `docs/pytest_conventions.md` |
 | Project Architecture | `docs/project_architecture.md` |
+| Runbooks | `docs/runbooks/` |
 | CSS Guidelines | `docs/css_guidelines.md` |
 | Beads (Issue Tracking) | `~/.claude/projects/<project-slug>/memory/beads.md` |
 | Dispatcharr API | `docs/dispatcharr_api.md` |
 | Discord Release Notes | `docs/discord_release_notes.md` |
+| Frontend Lint Policy | `docs/frontend_lint.md` |
 | Testing Details | `docs/testing.md` |
 | Shipping Workflow | `docs/shipping.md` |
 | Dummy EPG Template Engine | `docs/template_engine.md` |
+| DBAS Import Threat Model | `docs/security/threat_model_dbas_import.md` |
 
 ## Development Workflow
 

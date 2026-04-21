@@ -23,7 +23,7 @@ import logging
 import os
 import shutil
 import time
-from typing import Any, Optional
+from typing import Any, Awaitable, Callable, Optional
 
 from fastapi import APIRouter, Response
 from sqlalchemy import text
@@ -32,6 +32,7 @@ from cache import get_cache
 from config import get_settings
 from database import get_session
 from dispatcharr_client import get_client
+from observability import get_metric
 
 logger = logging.getLogger(__name__)
 
@@ -154,6 +155,41 @@ def _reset_dispatcharr_cache() -> None:
     _dispatcharr_cache["cached_until_iso"] = ""
 
 
+async def _timed(check_name: str, probe: Callable[[], Awaitable[dict]]) -> dict:
+    """Run an async probe, recording its duration on the readiness histogram.
+
+    Why wrap the existing probes instead of sprinkling timing logic inside
+    each? The probes were already written and tested; observability should
+    be a wrapper, not an intrusion. ``check_name`` is a fixed vocabulary
+    ({"database", "dispatcharr", "ffprobe"}), so the label cardinality is
+    trivially bounded — exactly what the metric contract requires.
+    """
+    start = time.perf_counter()
+    try:
+        return await probe()
+    finally:
+        _observe_check(check_name, time.perf_counter() - start)
+
+
+def _timed_sync(check_name: str, probe: Callable[[], dict]) -> dict:
+    """Synchronous counterpart to :func:`_timed` for ffprobe-style checks."""
+    start = time.perf_counter()
+    try:
+        return probe()
+    finally:
+        _observe_check(check_name, time.perf_counter() - start)
+
+
+def _observe_check(check_name: str, duration_seconds: float) -> None:
+    """Record a readiness sub-check duration on the Prometheus histogram."""
+    try:
+        get_metric("health_ready_check_duration_seconds").labels(
+            check=check_name
+        ).observe(duration_seconds)
+    except Exception as exc:  # pragma: no cover — never let metrics break health
+        logger.warning("[HEALTH] Metric emit for %s failed: %s", check_name, exc)
+
+
 # ============================================================================
 # Endpoints
 # ============================================================================
@@ -192,9 +228,13 @@ async def readiness_check(response: Response) -> dict:
     """
     global _last_ready_state
 
-    db_result = await _check_database()
-    dispatcharr_result = await _check_dispatcharr()
-    ffprobe_result = _check_ffprobe()
+    # Run every sub-check under a histogram. ``_timed`` records a duration
+    # sample labeled by the check name regardless of whether the probe
+    # returned ok/fail/skipped — the histogram answers "how long do these
+    # checks take?", which is the signal operators need to tune timeouts.
+    db_result = await _timed("database", _check_database)
+    dispatcharr_result = await _timed("dispatcharr", _check_dispatcharr)
+    ffprobe_result = _timed_sync("ffprobe", _check_ffprobe)
 
     checks = {
         "database": db_result,
@@ -221,6 +261,15 @@ async def readiness_check(response: Response) -> dict:
             logger.info("[HEALTH] Readiness transitioned ok -> fail: %s", "; ".join(failing))
     _last_ready_state = is_ready
 
+    # Publish the current readiness verdict as a 0/1 gauge so scrapers can
+    # alert on ``ecm_health_ready_ok == 0`` without having to parse JSON.
+    # We always write the gauge — even when the handler failed — so the
+    # metric never goes stale.
+    try:
+        get_metric("health_ready_ok").set(1 if is_ready else 0)
+    except Exception as exc:  # pragma: no cover — never let metrics break health
+        logger.warning("[HEALTH] Metric emit for health_ready_ok failed: %s", exc)
+
     payload: dict[str, Any] = {
         "status": "ready" if is_ready else "not_ready",
         "checks": checks,
@@ -230,6 +279,50 @@ async def readiness_check(response: Response) -> dict:
         response.status_code = 503
 
     return payload
+
+
+@router.get("/api/health/schema")
+async def schema_version() -> dict:
+    """Report the applied Alembic schema revision and SQLite PRAGMA state.
+
+    Exposed so DBAS restore/sync flows (bd-gb5r5.3 / bd-gb5r5.4) can gate on
+    the target deployment's schema version and detect drift before importing
+    a backup taken against a different revision.
+
+    Public endpoint (see ``main.AUTH_EXEMPT_PATHS``): no auth, no rate limit,
+    no subsystem probing beyond two cheap PRAGMA reads.
+    """
+    import database
+
+    current_rev = database.get_current_schema_revision()
+    head_rev = database.get_alembic_head_revision()
+
+    fk_enabled: Optional[bool] = None
+    journal_mode: Optional[str] = None
+    try:
+        # Prefer the live engine; fall back to the session's bound engine so
+        # tests that only patch _SessionLocal can still probe PRAGMA state.
+        try:
+            engine = database.get_engine()
+        except RuntimeError:
+            session_local = getattr(database, "_SessionLocal", None)
+            engine = session_local().get_bind() if session_local else None
+        if engine is not None:
+            with engine.connect() as conn:
+                fk_row = conn.execute(text("PRAGMA foreign_keys")).fetchone()
+                jm_row = conn.execute(text("PRAGMA journal_mode")).fetchone()
+                fk_enabled = bool(fk_row[0]) if fk_row else None
+                journal_mode = jm_row[0] if jm_row else None
+    except Exception:
+        logger.warning("[HEALTH] Could not query SQLite PRAGMA state", exc_info=True)
+
+    return {
+        "current_revision": current_rev,
+        "head_revision": head_rev,
+        "up_to_date": bool(current_rev) and current_rev == head_rev,
+        "foreign_keys_enabled": fk_enabled,
+        "journal_mode": journal_mode,
+    }
 
 
 # ============================================================================

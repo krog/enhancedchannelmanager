@@ -13,6 +13,7 @@ import {
   DragStartEvent,
   useDroppable,
 } from '@dnd-kit/core';
+import type { DraggableAttributes, DraggableSyntheticListeners } from '@dnd-kit/core';
 import {
   arrayMove,
   SortableContext,
@@ -170,6 +171,18 @@ interface SortDropdownButtonProps {
   labelText?: string;
   enabledCriteria?: Record<'resolution' | 'bitrate' | 'framerate' | 'video_codec' | 'm3u_priority' | 'audio_channels', boolean>;
 }
+
+// Sort mode labels for journal/description. Module-scoped so it's stable
+// across renders and doesn't need to appear in useCallback dep arrays.
+const SORT_MODE_LABELS: Record<SortMode, string> = {
+  smart: 'Smart Sort',
+  resolution: 'resolution',
+  bitrate: 'bitrate',
+  framerate: 'framerate',
+  video_codec: 'video codec',
+  m3u_priority: 'M3U priority',
+  audio_channels: 'audio channels',
+};
 
 const SortDropdownButton = memo(function SortDropdownButton({
   onSortByMode,
@@ -755,7 +768,11 @@ interface DroppableGroupHeaderProps {
   onSelectAll?: () => void;
   onStreamDropOnGroup?: (groupId: number | 'ungrouped', streamIds: number[]) => void;
   onContextMenu?: (e: React.MouseEvent) => void;
-  dragHandleProps?: any;
+  // Drag handle props: `{ ...attributes, ...listeners }` from @dnd-kit/sortable's
+  // useSortable(). `attributes` is ARIA/a11y metadata (strings/booleans) and `listeners`
+  // is a map of DOM event handlers. dnd-kit's SyntheticListenerMap (Record<string, Function>)
+  // doesn't compose cleanly with DraggableAttributes, so we widen to the spread shape.
+  dragHandleProps?: DraggableAttributes | (DraggableAttributes & NonNullable<DraggableSyntheticListeners>);
   onProbeGroup?: () => void;
   isProbing?: boolean;
   onSortStreamsByQuality?: () => void;
@@ -1521,7 +1538,7 @@ export function ChannelsPane({
       editChannelModal.open();
       onExternalChannelEditHandled?.();
     }
-  }, [externalChannelToEdit, onExternalChannelEditHandled]);
+  }, [externalChannelToEdit, onExternalChannelEditHandled, editChannelModal]);
 
   // Create a Map for O(1) logo lookups instead of O(n) array.find()
   const logoMap = useMemo(() => {
@@ -2713,16 +2730,7 @@ export function ChannelsPane({
 
 
 
-  // Sort mode labels for journal/description
-  const SORT_MODE_LABELS: Record<SortMode, string> = {
-    smart: 'Smart Sort',
-    resolution: 'resolution',
-    bitrate: 'bitrate',
-    framerate: 'framerate',
-    video_codec: 'video codec',
-    m3u_priority: 'M3U priority',
-    audio_channels: 'audio channels',
-  };
+  // SORT_MODE_LABELS is at module scope above.
 
   // Sort streams by specified mode (single channel) — delegates to backend
   const handleSortStreamsByMode = useCallback(async (mode: SortMode) => {
@@ -2744,6 +2752,10 @@ export function ChannelsPane({
       const result = response.results[0];
       if (!result || !result.changed) {
         logger.info(`[SmartSort] No change needed - streams already in sorted order`);
+        notifications.info(
+          'No reorder needed: stream order already matches this sort (or all streams tie on the same metrics). Enable more criteria in Settings → Smart Sort, or probe streams for quality data.',
+          'Sort Complete'
+        );
         return;
       }
 
@@ -2827,7 +2839,10 @@ export function ChannelsPane({
       if (changesCount > 0) {
         notifications.success(`Sorted ${changesCount} of ${channelsToProcess.length} channel${channelsToProcess.length !== 1 ? 's' : ''} by ${SORT_MODE_LABELS[mode]}`, 'Sort Complete');
       } else {
-        notifications.info(`Streams already in ${SORT_MODE_LABELS[mode]} order`, 'Sort Complete');
+        notifications.info(
+          `No channels reordered: order already matches ${SORT_MODE_LABELS[mode]} (or all streams tie). Check Settings → Smart Sort, or probe streams.`,
+          'Sort Complete'
+        );
       }
       logger.info(`Bulk sort by ${SORT_MODE_LABELS[mode]}: ${changesCount} of ${channelsToProcess.length} channels reordered`);
     } catch (err) {
@@ -3130,7 +3145,7 @@ export function ChannelsPane({
   const stripCountryPrefix = useCallback((channelName: string): string => {
     // Match country code (2-3 uppercase letters) followed by separator and the rest
     // Supports: "US | Name", "UK: Name", "CA - Name", "USA | Name", etc.
-    const match = channelName.match(/^[A-Z]{2,3}\s*[|:\-]\s*(.+)$/);
+    const match = channelName.match(/^[A-Z]{2,3}\s*[|:-]\s*(.+)$/);
     if (match) {
       return match[1].trim();
     }
@@ -3400,19 +3415,23 @@ export function ChannelsPane({
   // Build a set of group IDs that are related to auto_channel_sync:
   // 1. Groups that have auto_channel_sync: true directly
   // 2. Groups that are group_override targets of auto_channel_sync groups
-  const autoSyncRelatedGroups = new Set<number>();
-  if (providerSettingsMap) {
-    for (const setting of Object.values(providerSettingsMap)) {
-      if (setting.auto_channel_sync) {
-        // Add the source group itself
-        autoSyncRelatedGroups.add(setting.channel_group);
-        // Also add the group_override target if set
-        if (setting.custom_properties?.group_override) {
-          autoSyncRelatedGroups.add(setting.custom_properties.group_override);
+  // Memoized so downstream useMemo deps are stable across renders.
+  const autoSyncRelatedGroups = useMemo(() => {
+    const result = new Set<number>();
+    if (providerSettingsMap) {
+      for (const setting of Object.values(providerSettingsMap)) {
+        if (setting.auto_channel_sync) {
+          // Add the source group itself
+          result.add(setting.channel_group);
+          // Also add the group_override target if set
+          if (setting.custom_properties?.group_override) {
+            result.add(setting.custom_properties.group_override);
+          }
         }
       }
     }
-  }
+    return result;
+  }, [providerSettingsMap]);
 
   // Memoize expensive channel filtering and grouping operations
   const channelsByGroup = useMemo(() => {
@@ -3530,7 +3549,7 @@ export function ChannelsPane({
   }, [channelGroups]);
 
   // Helper function to determine if a group should be visible based on filter settings
-  const shouldShowGroup = (groupId: number): boolean => {
+  const shouldShowGroup = useCallback((groupId: number): boolean => {
     if (!channelListFilters) return true;
 
     const groupHasChannels = (channelsByGroup[groupId]?.length ?? 0) > 0;
@@ -3570,12 +3589,12 @@ export function ChannelsPane({
     }
 
     return true;
-  };
+  }, [channelListFilters, channelsByGroup, newlyCreatedGroupIds, autoSyncRelatedGroups, providerSettingsMap]);
 
   // Filter sorted channel groups based on filter settings
   const filteredChannelGroups = useMemo(() => {
     return sortedChannelGroups.filter((g) => shouldShowGroup(g.id));
-  }, [sortedChannelGroups, channelListFilters, channelsByGroup, newlyCreatedGroupIds, autoSyncRelatedGroups, providerSettingsMap]);
+  }, [sortedChannelGroups, shouldShowGroup]);
 
   const handleDragStart = (event: DragStartEvent) => {
     const activeId = event.active.id;
@@ -4643,12 +4662,13 @@ export function ChannelsPane({
           handleCrossGroupMoveConfirm(false, crossGroupMoveData.suggestedChannelNumber, renumberSourceGroup);
         }
         break;
-      case 'custom':
+      case 'custom': {
         const customNum = parseInt(customStartingNumber, 10);
         if (!isNaN(customNum) && customNum >= 1) {
           handleCrossGroupMoveConfirm(false, customNum, renumberSourceGroup);
         }
         break;
+      }
     }
   };
 
@@ -4779,7 +4799,7 @@ export function ChannelsPane({
       const newNumber = startingNumber + index;
       if (channel.channel_number !== newNumber) {
         // Apply auto-rename if enabled in dialog
-        let updates: Partial<Channel> = { channel_number: newNumber };
+        const updates: Partial<Channel> = { channel_number: newNumber };
         if (sortRenumberUpdateNames && channel.channel_number !== null) {
           const newName = computeAutoRename(channel.name, channel.channel_number, newNumber);
           if (newName && newName !== channel.name) {
@@ -5004,7 +5024,7 @@ export function ChannelsPane({
       sortedConflicts.forEach((channel, index) => {
         // New number = endNum + 1 + (position from the end of conflicts)
         const newNumber = endNum + 1 + (sortedConflicts.length - 1 - index);
-        let updates: Partial<Channel> = { channel_number: newNumber };
+        const updates: Partial<Channel> = { channel_number: newNumber };
 
         // Apply auto-rename if enabled in the dialog
         if (massRenumberUpdateNames && channel.channel_number !== null) {
@@ -5025,7 +5045,7 @@ export function ChannelsPane({
     massRenumberChannels.forEach((channel, index) => {
       const newNumber = startNum + index;
       if (channel.channel_number !== newNumber) {
-        let updates: Partial<Channel> = { channel_number: newNumber };
+        const updates: Partial<Channel> = { channel_number: newNumber };
 
         // Apply auto-rename if enabled in the dialog
         if (massRenumberUpdateNames && channel.channel_number !== null) {

@@ -574,6 +574,9 @@ export function SettingsTab({ onSaved, onThemeChange, channelProfiles = [], onPr
     if (activePage === 'm3u-digest' && !digestSettings && !digestLoading) {
       loadDigestSettings();
     }
+    // loadDigestSettings is a local function reference that never changes
+    // identity in a harmful way (no closed-over state that would stale).
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- safe local function reference
   }, [activePage, digestSettings, digestLoading]);
 
   // Load available stream groups when auto-creation page is activated
@@ -583,6 +586,9 @@ export function SettingsTab({ onSaved, onThemeChange, channelProfiles = [], onPr
         setAvailableStreamGroups(groups.map(g => g.name).sort((a, b) => a.localeCompare(b)));
       }).catch(() => {});
     }
+    // The `length === 0` guard makes repeated activations safe even if
+    // availableStreamGroups changes identity.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: fetch only when first activated
   }, [activePage]);
 
   // Load M3U accounts to show guidance for max concurrent probes
@@ -630,7 +636,7 @@ export function SettingsTab({ onSaved, onThemeChange, channelProfiles = [], onPr
           setProbeProgress(progress);
           setProbingAll(true);
         }
-      } catch (err) {
+      } catch {
         // Silently ignore errors - this is background polling
       }
     };
@@ -683,7 +689,10 @@ export function SettingsTab({ onSaved, onThemeChange, channelProfiles = [], onPr
     return () => {
       clearInterval(interval);
     };
-  }, [probingAll]);
+    // onProbeComplete is an optional parent callback; not including it is fine
+    // since the polling shuts down on progress completion regardless.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- polling lifecycle is owned by `probingAll`; parent callback identity doesn't need to restart polling
+  }, [probingAll, notifications]);
 
   const loadStreamCount = async () => {
     try {
@@ -829,6 +838,7 @@ export function SettingsTab({ onSaved, onThemeChange, channelProfiles = [], onPr
         notifications.error('Failed to reset statistics', 'Reset Statistics');
       }
     } catch (err) {
+      logger.error('SettingsTab: failed to reset statistics', err);
       notifications.error('Failed to reset statistics', 'Reset Statistics');
     } finally {
       setResettingStats(false);
@@ -1183,6 +1193,7 @@ export function SettingsTab({ onSaved, onThemeChange, channelProfiles = [], onPr
         notifications.error(result.message || 'Failed to restart services', 'Restart Failed');
       }
     } catch (err) {
+      logger.error('SettingsTab: failed to restart services', err);
       notifications.error('Failed to restart services', 'Restart Failed');
     } finally {
       setRestarting(false);
@@ -2374,6 +2385,7 @@ export function SettingsTab({ onSaved, onThemeChange, channelProfiles = [], onPr
         notifications.error(result.message, 'SMTP Test');
       }
     } catch (err) {
+      logger.error('SettingsTab: failed to test SMTP connection', err);
       notifications.error('Failed to test SMTP connection', 'SMTP Test');
     } finally {
       setSmtpTesting(false);
@@ -2432,6 +2444,7 @@ export function SettingsTab({ onSaved, onThemeChange, channelProfiles = [], onPr
         notifications.error(result.message, 'Telegram Test');
       }
     } catch (err) {
+      logger.error('SettingsTab: failed to test Telegram bot', err);
       notifications.error('Failed to test Telegram bot', 'Telegram Test');
     } finally {
       setTelegramTesting(false);
